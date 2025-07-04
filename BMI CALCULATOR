@@ -1,1 +1,582 @@
+BMI Calculator - Web Application
+A complete BMI calculator that runs in your web browser
+"""
 
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
+import urllib.parse
+import os
+from datetime import datetime
+import webbrowser
+import threading
+import time
+
+class BMICalculator:
+    def __init__(self):
+        self.history_file = "bmi_history.json"
+        self.load_history()
+    
+    def load_history(self):
+        """Load BMI history from file"""
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r') as f:
+                    self.history_data = json.load(f)
+            else:
+                self.history_data = []
+        except:
+            self.history_data = []
+    
+    def save_history(self):
+        """Save BMI history to file"""
+        try:
+            with open(self.history_file, 'w') as f:
+                json.dump(self.history_data, f, indent=2)
+        except:
+            pass
+    
+    def calculate_bmi(self, weight, weight_unit, height, height_unit):
+        """Calculate BMI and return result"""
+        try:
+            weight = float(weight)
+            height = float(height)
+            
+            if weight <= 0 or height <= 0:
+                raise ValueError("Weight and height must be positive numbers")
+            
+            # Convert weight to kg
+            weight_in_kg = weight
+            if weight_unit == "lbs":
+                weight_in_kg = weight * 0.453592
+            
+            # Convert height to meters
+            height_in_m = height
+            if height_unit == "cm":
+                height_in_m = height / 100
+            elif height_unit == "ft":
+                height_in_m = height * 0.3048
+            
+            # Calculate BMI
+            bmi = weight_in_kg / (height_in_m ** 2)
+            
+            # Determine category
+            if bmi < 18.5:
+                category = "Underweight"
+                color = "#3498db"
+                advice = "You may need to gain weight. Consider consulting with a healthcare provider."
+            elif 18.5 <= bmi < 25:
+                category = "Normal Weight"
+                color = "#2ecc71"
+                advice = "Great! You have a healthy weight. Maintain your current lifestyle."
+            elif 25 <= bmi < 30:
+                category = "Overweight"
+                color = "#f39c12"
+                advice = "Consider adopting a healthier lifestyle with regular exercise and balanced diet."
+            else:
+                category = "Obese"
+                color = "#e74c3c"
+                advice = "It's recommended to consult with a healthcare provider for a weight management plan."
+            
+            # Save to history
+            self.save_to_history(bmi, category, weight, weight_unit, height, height_unit)
+            
+            return {
+                "success": True,
+                "bmi": round(bmi, 1),
+                "category": category,
+                "color": color,
+                "advice": advice,
+                "history": self.history_data
+            }
+            
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": f"Calculation error: {str(e)}"}
+    
+    def save_to_history(self, bmi, category, weight, weight_unit, height, height_unit):
+        """Save calculation to history"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        history_item = {
+            "bmi": round(bmi, 1),
+            "category": category,
+            "weight": f"{weight} {weight_unit}",
+            "height": f"{height} {height_unit}",
+            "timestamp": timestamp
+        }
+        
+        self.history_data.insert(0, history_item)
+        
+        # Keep only last 10 entries
+        if len(self.history_data) > 10:
+            self.history_data = self.history_data[:10]
+        
+        self.save_history()
+    
+    def clear_history(self):
+        """Clear all history"""
+        self.history_data = []
+        if os.path.exists(self.history_file):
+            os.remove(self.history_file)
+        return {"success": True, "history": []}
+
+# Global BMI calculator instance
+bmi_calc = BMICalculator()
+
+class BMIRequestHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/" or self.path == "/index.html":
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(self.get_html_page().encode())
+        elif self.path == "/get_history":
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {"history": bmi_calc.history_data}
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            super().do_GET()
+    
+    def do_POST(self):
+        if self.path == "/calculate":
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            params = urllib.parse.parse_qs(post_data)
+            
+            weight = params.get('weight', [''])[0]
+            weight_unit = params.get('weight_unit', ['kg'])[0]
+            height = params.get('height', [''])[0]
+            height_unit = params.get('height_unit', ['m'])[0]
+            
+            result = bmi_calc.calculate_bmi(weight, weight_unit, height, height_unit)
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+            
+        elif self.path == "/clear_history":
+            result = bmi_calc.clear_history()
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+    
+    def get_html_page(self):
+        return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMI Calculator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 25px;
+            font-size: 2.2em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: bold;
+        }
+        
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input[type="number"] {
+            flex: 2;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        
+        select {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .calculate-btn, .clear-btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        
+        .calculate-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .calculate-btn:hover {
+            opacity: 0.9;
+        }
+        
+        .clear-btn {
+            background: #e74c3c;
+            color: white;
+            font-size: 14px;
+            padding: 10px;
+        }
+        
+        .result {
+            text-align: center;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .bmi-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .bmi-category {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .bmi-description {
+            font-size: 1em;
+            line-height: 1.5;
+        }
+        
+        .history {
+            margin-top: 25px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .history h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .history-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        
+        .error {
+            background-color: #ff7675;
+            color: white;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BMI Calculator</h1>
+        
+        <form id="bmiForm">
+            <div class="form-group">
+                <label for="weight">Weight:</label>
+                <div class="input-row">
+                    <input type="number" id="weight" step="0.1" min="0.1" placeholder="Enter weight" required>
+                    <select id="weightUnit">
+                        <option value="kg">kg</option>
+                        <option value="lbs">lbs</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="height">Height:</label>
+                <div class="input-row">
+                    <input type="number" id="height" step="0.01" min="0.01" placeholder="Enter height" required>
+                    <select id="heightUnit">
+                        <option value="m">meters</option>
+                        <option value="cm">cm</option>
+                        <option value="ft">feet</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" class="calculate-btn">Calculate BMI</button>
+        </form>
+
+        <div id="result" class="result"></div>
+
+        <div id="history" class="history" style="display: none;">
+            <h3>BMI History</h3>
+            <div id="historyList"></div>
+            <button type="button" class="clear-btn" onclick="clearHistory()">Clear History</button>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('bmiForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            calculateBMI();
+        });
+
+        async function calculateBMI() {
+            const weight = document.getElementById('weight').value;
+            const height = document.getElementById('height').value;
+            const weightUnit = document.getElementById('weightUnit').value;
+            const heightUnit = document.getElementById('heightUnit').value;
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<div class="loading">Calculating...</div>';
+            resultDiv.style.display = 'block';
+            
+            try {
+                const response = await fetch('/calculate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `weight=${weight}&height=${height}&weight_unit=${weightUnit}&height_unit=${heightUnit}`
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    resultDiv.innerHTML = `
+                        <div class="bmi-value" style="color: ${result.color}">${result.bmi}</div>
+                        <div class="bmi-category" style="color: ${result.color}">${result.category}</div>
+                        <div class="bmi-description">${result.advice}</div>
+                    `;
+                    resultDiv.style.backgroundColor = result.color + '20';
+                    
+                    updateHistory(result.history);
+                } else {
+                    resultDiv.innerHTML = `<div style="color: #e74c3c;">Error: ${result.error}</div>`;
+                    resultDiv.className = 'result error';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<div style="color: #e74c3c;">Network error. Please try again.</div>';
+                resultDiv.className = 'result error';
+            }
+        }
+        
+        function updateHistory(history) {
+            const historyDiv = document.getElementById('history');
+            const historyList = document.getElementById('historyList');
+            
+            if (history.length === 0) {
+                historyDiv.style.display = 'none';
+                return;
+            }
+            
+            historyDiv.style.display = 'block';
+            historyList.innerHTML = '';
+            
+            history.forEach(item => {
+                const historyItem = document.createElement('div');
+                historyItem.className = 'history-item';
+                historyItem.innerHTML = `
+                    <strong>BMI: ${item.bmi}</strong> (${item.category})<br>
+                    <small>${item.weight}, ${item.height} - ${item.timestamp}</small>
+                `;
+                historyList.appendChild(historyItem);
+            });
+        }
+        
+        async function clearHistory() {
+            try {
+                const response = await fetch('/clear_history', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('history').style.display = 'none';
+                }
+            } catch (error) {
+                alert('Error clearing history');
+            }
+        }
+        
+        // Load history on page load
+        window.addEventListener('load', async function() {
+            try {
+                const response = await fetch('/get_history');
+                const result = await response.json();
+                updateHistory(result.history);
+            } catch (error) {
+                console.log('Could not load history');
+            }
+        });
+    </script>
+</body>
+</html>'''
+
+def open_browser():
+    """Open web browser after a short delay"""
+    time.sleep(1)
+    webbrowser.open('http://localhost:8000')
+
+def start_server():
+    """Start the BMI calculator web server"""
+    server_address = ('', 8000)
+    httpd = HTTPServer(server_address, BMIRequestHandler)
+    
+    print("=" * 60)
+    print("🏥 BMI Calculator Web Application")
+    print("=" * 60)
+    print(f"🌐 Server starting at: http://localhost:8000")
+    print("📱 The calculator will open in your web browser")
+    print("⚡ Features: BMI calculation, history tracking, multiple units")
+    print("🛑 Press Ctrl+C to stop the server")
+    print("=" * 60)
+    
+    # Open browser in a separate thread
+    browser_thread = threading.Thread(target=open_browser)
+    browser_thread.daemon = True
+    browser_thread.start()
+    
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\n\n👋 BMI Calculator server stopped.")
+        print("Thank you for using BMI Calculator!")
+        httpd.server_close()
+
+# Console version for environments without web browser
+def console_bmi_calculator():
+    """Console version of BMI calculator"""
+    print("=" * 50)
+    print("         BMI CALCULATOR (Console Version)")
+    print("=" * 50)
+    
+    calc = BMICalculator()
+    
+    while True:
+        try:
+            print("\n1. Calculate BMI")
+            print("2. View History")
+            print("3. Clear History")
+            print("4. Exit")
+            choice = input("\nEnter your choice (1-4): ").strip()
+            
+            if choice == "4":
+                print("Thank you for using BMI Calculator!")
+                break
+            elif choice == "1":
+                weight = input("Enter weight: ")
+                weight_unit = input("Weight unit (kg/lbs) [default: kg]: ").strip().lower()
+                if weight_unit not in ["kg", "lbs"]:
+                    weight_unit = "kg"
+                
+                height = input("Enter height: ")
+                height_unit = input("Height unit (m/cm/ft) [default: m]: ").strip().lower()
+                if height_unit not in ["m", "cm", "ft"]:
+                    height_unit = "m"
+                
+                result = calc.calculate_bmi(weight, weight_unit, height, height_unit)
+                
+                if result["success"]:
+                    print(f"\n{'-' * 30}")
+                    print(f"BMI: {result['bmi']}")
+                    print(f"Category: {result['category']}")
+                    print(f"Advice: {result['advice']}")
+                    print(f"{'-' * 30}")
+                else:
+                    print(f"Error: {result['error']}")
+                    
+            elif choice == "2":
+                if calc.history_data:
+                    print(f"\n{'-' * 50}")
+                    print("BMI HISTORY")
+                    print(f"{'-' * 50}")
+                    for i, item in enumerate(calc.history_data, 1):
+                        print(f"{i}. BMI: {item['bmi']} ({item['category']})")
+                        print(f"   {item['weight']}, {item['height']}")
+                        print(f"   {item['timestamp']}")
+                        print()
+                else:
+                    print("No history available.")
+                    
+            elif choice == "3":
+                confirm = input("Clear all history? (y/N): ").strip().lower()
+                if confirm == 'y':
+                    calc.clear_history()
+                    print("History cleared.")
+            else:
+                print("Invalid choice. Please try again.")
+                
+        except KeyboardInterrupt:
+            print("\n\nProgram terminated by user.")
+            break
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+if __name__ == "__main__":
+    print("BMI Calculator - Choose interface:")
+    print("1. Web Application (Recommended)")
+    print("2. Console Application")
+    
+    try:
+        choice = input("Enter choice (1-2): ").strip()
+        
+        if choice == "1":
+            start_server()
+        else:
+            console_bmi_calculator()
+            
+    except KeyboardInterrupt:
+        print("\nProgram terminated by user.")
+    except Exception as e:
+        print(f"Error starting application: {e}")
+        print("Falling back to console version...")
+        console_bmi_calculator()
